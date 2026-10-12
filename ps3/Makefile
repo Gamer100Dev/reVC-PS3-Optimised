@@ -104,6 +104,7 @@ GAME_SRCS := $(foreach d,$(GAME_DIRS),$(wildcard $(SRC)/$(d)/*.cpp))
 GAME_SRCS := $(filter-out \
   $(SRC)/core/CdStream.cpp $(SRC)/core/CdStreamPosix.cpp \
   $(SRC)/audio/sampman_oal.cpp $(SRC)/audio/sampman_miles.cpp \
+  $(SRC)/extras/GitSHA1.cpp \
   $(SRC)/extras/custompipes_d3d9.cpp $(SRC)/extras/custompipes_gl.cpp, $(GAME_SRCS))
 
 PS3_SRCS := $(addprefix $(SRC)/skel/ps3/, \
