@@ -24,10 +24,13 @@ ifeq ($(strip $(PSL1GHT)),)
   export PSL1GHT := $(PS3DEV)
 endif
 
-VERSION := 1.2-alpha
+VERSION := 1.1.1-alpha
 STAGE   ?= 2
 DEBUG   ?= 0
 FTRACE  ?= 0
+SPU_SELFTEST ?= 0
+PS3_PARTICLE_SPU ?= 1
+SPU_FAULT_INJECT ?= 0
 
 APPID   := REVCPS300
 ifeq ($(STAGE),1)
@@ -42,6 +45,15 @@ ifeq ($(DEBUG),1)
 endif
 ifeq ($(FTRACE),1)
   VARIANT := $(VARIANT)-ftrace
+endif
+ifeq ($(SPU_SELFTEST),1)
+  VARIANT := $(VARIANT)-spu-test
+endif
+ifeq ($(PS3_PARTICLE_SPU),1)
+  VARIANT := $(VARIANT)-particle-spu
+endif
+ifeq ($(SPU_FAULT_INJECT),1)
+  VARIANT := $(VARIANT)-spu-failtest
 endif
 
 ROOT     := $(abspath $(CURDIR)/..)
@@ -82,7 +94,7 @@ LIBRW_SRCS := $(addprefix $(RW)/, \
   gl/gl3raster.cpp gl/gl3render.cpp gl/gl3shader.cpp gl/gl3skin.cpp gl/wdgl.cpp \
   ps2/pds.cpp ps2/ps2.cpp ps2/ps2device.cpp ps2/ps2matfx.cpp ps2/ps2raster.cpp ps2/ps2skin.cpp \
   ps3/ps3device.cpp ps3/ps3raster.cpp ps3/ps3mem.cpp ps3/ps3video.cpp ps3/ps3pipe.cpp \
-  ps3/ps3immed.cpp \
+  ps3/ps3immed.cpp ps3/ps3spu.cpp \
   lodepng/lodepng.cpp)
 
 # every game directory, minus the PC platform layers and the audio backends
@@ -95,7 +107,7 @@ GAME_SRCS := $(filter-out \
   $(SRC)/extras/custompipes_d3d9.cpp $(SRC)/extras/custompipes_gl.cpp, $(GAME_SRCS))
 
 PS3_SRCS := $(addprefix $(SRC)/skel/ps3/, \
-  ps3.cpp ps3_log.cpp ps3_fs.cpp ps3_pad.cpp ps3_cdstream.cpp ps3_prof.cpp ps3_autotest.cpp)
+  ps3.cpp ps3_log.cpp ps3_fs.cpp ps3_pad.cpp ps3_cdstream.cpp ps3_prof.cpp ps3_autotest.cpp ps3_movie.cpp)
 
 GAME_INCS := $(foreach d,$(GAME_DIRS),-I$(SRC)/$(d)) -I$(SRC)/skel/ps3 -I$(SRC)/audio/eax
 
@@ -115,7 +127,16 @@ COMMON_FLAGS := -O2 -mcpu=cell -mtune=cell -mno-altivec -fno-math-errno -fno-tra
 
 # stage 2: the RSX renderer of librw's PS3 backend
 ifneq ($(STAGE),1)
-  COMMON_FLAGS += -DRW_PS3_RSX -DAUDIO_PS3
+  COMMON_FLAGS += -DRW_PS3_RSX -DAUDIO_PS3 -DPS3_MOVIES
+endif
+ifeq ($(SPU_SELFTEST),1)
+  COMMON_FLAGS += -DRW_PS3_SPU_SELFTEST
+endif
+ifeq ($(PS3_PARTICLE_SPU),1)
+  COMMON_FLAGS += -DRW_PS3_PARTICLE_SPU
+endif
+ifeq ($(SPU_FAULT_INJECT),1)
+  COMMON_FLAGS += -DRW_PS3_PARTICLE_FAULT_INJECT
 endif
 
 # The whole EBOOT shares one 64 KB TOC: -mminimal-toc gives each object its
@@ -137,9 +158,14 @@ else
   COMMON_FLAGS += -DNDEBUG
 endif
 COMMON_FLAGS += $(EXTRA_CFLAGS)
+ifneq ($(DEBUG),1)
+  # Release builds must not inherit command-buffer tracing from EXTRA_CFLAGS.
+  # Keep -U after user flags so the synchronous diagnostic path stays absent.
+  COMMON_FLAGS += -URW_PS3_DEBUG_CB
+endif
 
 LIBRW_FLAGS := $(COMMON_FLAGS) -I$(RW) -I$(ROOT)/vendor/librw
-GAME_FLAGS  := $(COMMON_FLAGS) -I$(ROOT)/vendor/librw -I$(SRC) $(GAME_INCS) -I$(OBJDIR)
+GAME_FLAGS  := $(COMMON_FLAGS) -I$(ROOT)/vendor/librw -I$(RW) -I$(SRC) $(GAME_INCS) -I$(OBJDIR)
 
 # libc calls with relative paths and the game's stdout/stderr (see ps3_fs.cpp,
 # ps3_log.cpp)
@@ -153,13 +179,25 @@ WRAPFLAGS := $(foreach w,$(WRAP),-Wl,--wrap=$(w))
 LDFLAGS := -Wl,--no-multi-toc $(WRAPFLAGS) $(LIBPSL1GHT_LIB) -L$(PORTLIBS)/lib
 LIBS    := -llv2dbg -lio -lsysmodule -lsysutil -lrt -llv2 -lm
 ifneq ($(STAGE),1)
-  LIBS  := -lrsx -lgcm_sys -laudio $(LIBS)
+  LIBS  := -lrsx -lgcm_sys -laudio -lspumarstask -lspumars -lspurs $(LIBS)
+  RSX_LINK_MAP := -Wl,-Map,$(BUILDDIR)/$(TARGET).map
 endif
 
 #---------------------------------------------------------------------------------
 # Objects
 #---------------------------------------------------------------------------------
 LIBRW_OBJS := $(patsubst $(ROOT)/%.cpp,$(OBJDIR)/%.o,$(LIBRW_SRCS))
+SPU_TASK := $(OBJDIR)/vendor/librw/src/ps3/ps3mip.task
+SPU_EMBED_OBJ := $(OBJDIR)/vendor/librw/src/ps3/ps3mip_embed.o
+SPU_PARTICLE_TASK := $(OBJDIR)/vendor/librw/src/ps3/ps3particle.task
+SPU_PARTICLE_EMBED_OBJ := $(OBJDIR)/vendor/librw/src/ps3/ps3particle_embed.o
+RSX_COMMAND_OBJ := $(OBJDIR)/vendor/psl1ght/ppu/librsx/commands.o
+ifneq ($(STAGE),1)
+  # Compile PSL1GHT's command writer locally so the patched callback trampoline
+  # is linked before -lrsx. Its object supplies all librsx command symbols,
+  # preventing the archive's commands.o (with the old trampoline) from loading.
+  LIBRW_OBJS += $(SPU_EMBED_OBJ) $(SPU_PARTICLE_EMBED_OBJ) $(RSX_COMMAND_OBJ)
+endif
 GAME_OBJS  := $(patsubst $(ROOT)/%.cpp,$(OBJDIR)/%.o,$(GAME_SRCS) $(PS3_SRCS)) \
               $(OBJDIR)/GitSHA1.o
 
@@ -170,13 +208,11 @@ ELF := $(OBJDIR)/$(TARGET).elf
 # dumps them when the game thread dies). The small math/entity/list helpers
 # are left out. It costs a little CPU on every call, so the release is
 # built without it; the crumbs stay in both.
-FTRACE_DIRS := audio vehicles peds weapons collision render/Shadows render/Particle core/World \
+FTRACE_DIRS := peds weapons collision render/Shadows render/Particle core/World \
   render/Hud core/Radar render/Font render/Sprite2d render/SpecialFX text/Messages \
   control/Darkel control/Pickups control/Garages animation/AnimManager \
   animation/RpAnimBlend animation/AnimBlendAssociation animation/AnimBlendClumpData \
-  core/References core/EventList core/Accident core/Fire entities/Physical \
-  render/Glass render/WaterCannon core/Ropes render/Skidmarks render/Antennas render/Rubbish \
-  render/Coronas render/PointLights render/Fluff weapons/WeaponEffects
+  core/References core/EventList core/Accident core/Fire entities/Physical
 FTRACE_EXCLUDE := math/ Vector Matrix Quaternion General.h Timer.h Rect.h templates.h \
   common.h Lists.h Placeable.h Entity.h Physical.h PtrList.h PtrNode.h ColPoint.h \
   ColModel.h ColTriangle.h ColBox.h ColSphere.h ColLine.h CompressedVector.h \
@@ -226,10 +262,40 @@ pkgfiles:
 	@printf "%s\n%s\npatch %s\nbuilt %s\n" "$(TITLE)" "$(TARGET) $(VARIANT)" "$(PATCHLEVEL)" \
 	  "$$(date '+%Y-%m-%d %H:%M')" > $(PKGFILES)/USRDIR/VERSION.TXT
 
-$(ELF): $(LIBRW_OBJS) $(GAME_OBJS)
+$(ELF): $(LIBRW_OBJS) $(GAME_OBJS) $(CURDIR)/Makefile
 	@echo "LD $(notdir $@)"
-	@$(CXX) $(COMMON_FLAGS) $(LDFLAGS) $(LIBRW_OBJS) $(GAME_OBJS) $(LIBS) -o $@
+	@mkdir -p $(BUILDDIR)
+	@$(CXX) $(COMMON_FLAGS) $(LDFLAGS) $(RSX_LINK_MAP) $(LIBRW_OBJS) $(GAME_OBJS) $(LIBS) -o $@
 	@$(MAKE) --no-print-directory check
+
+$(SPU_TASK): $(RW)/ps3/ps3mip_task.c
+	@mkdir -p $(dir $@)
+	spu-gcc -c -Os -ffast-math -ftree-vectorize -ffunction-sections -fdata-sections -I$(PSL1GHT)/spu/include $< -o $(@:.task=.spu.o)
+	spu-gcc -nostartfiles -Wl,--entry=main $(@:.task=.spu.o) -Wl,-Ttext-segment=0x3a00 -Wl,--gc-sections -Wl,--local-store=0x3a00:0x3FFFF -L$(PSL1GHT)/spu/lib -Wl,--start-group -lspumarstask -lspumars -lsputhread -Wl,--end-group -o $@
+
+$(SPU_EMBED_OBJ): $(SPU_TASK) $(CURDIR)/Makefile
+	@mkdir -p $(dir $@)
+	# MARS mars_task_create consumes the raw SPU ELF image, as in PSL1GHT's
+	# spumars sample. ppu-embedspu instead creates a libspe handle structure.
+	bin2s -a 64 $< | $(AS) -o $@
+
+$(SPU_PARTICLE_TASK): $(RW)/ps3/ps3particle_task.c
+	@mkdir -p $(dir $@)
+	spu-gcc -c -O2 -ftree-vectorize -ffunction-sections -fdata-sections -I$(PSL1GHT)/spu/include $< -o $(@:.task=.spu.o)
+	spu-gcc -nostartfiles -Wl,--entry=main $(@:.task=.spu.o) -Wl,-Ttext-segment=0x3a00 -Wl,--gc-sections -Wl,--local-store=0x3a00:0x3FFFF -L$(PSL1GHT)/spu/lib -Wl,--start-group -lspumarstask -lspumars -lsputhread -Wl,--end-group -o $@
+
+$(SPU_PARTICLE_EMBED_OBJ): $(SPU_PARTICLE_TASK) $(CURDIR)/Makefile
+	@mkdir -p $(dir $@)
+	bin2s -a 64 $< | $(AS) -o $@
+
+$(RSX_COMMAND_OBJ): $(ROOT)/vendor/psl1ght/ppu/librsx/commands.c \
+	$(ROOT)/vendor/psl1ght/ppu/librsx/commands_impl.h \
+	$(ROOT)/vendor/psl1ght/ppu/librsx/rsx_internal.h \
+	$(ROOT)/vendor/psl1ght/ppu/include/rsx_function_macros.h
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON_FLAGS) -I$(ROOT)/vendor/psl1ght/ppu/include \
+	  -I$(ROOT)/vendor/psl1ght/ppu/librsx -I$(PSL1GHT)/ppu/include/rsx \
+	  -c $(ROOT)/vendor/psl1ght/ppu/librsx/commands.c -o $@
 
 # TOC guard (see LDFLAGS): .got must stay under 64 KB and no r2off stubs.
 check:
