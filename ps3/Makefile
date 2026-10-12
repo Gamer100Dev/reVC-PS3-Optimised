@@ -24,7 +24,7 @@ ifeq ($(strip $(PSL1GHT)),)
   export PSL1GHT := $(PS3DEV)
 endif
 
-VERSION := 1.1.1-alpha
+VERSION := 1.2-alpha
 STAGE   ?= 2
 DEBUG   ?= 0
 FTRACE  ?= 0
@@ -104,7 +104,7 @@ GAME_SRCS := $(foreach d,$(GAME_DIRS),$(wildcard $(SRC)/$(d)/*.cpp))
 GAME_SRCS := $(filter-out \
   $(SRC)/core/CdStream.cpp $(SRC)/core/CdStreamPosix.cpp \
   $(SRC)/audio/sampman_oal.cpp $(SRC)/audio/sampman_miles.cpp \
-  $(SRC)/extras/GitSHA1.cpp \
+	$(SRC)/extras/GitSHA1.cpp \
   $(SRC)/extras/custompipes_d3d9.cpp $(SRC)/extras/custompipes_gl.cpp, $(GAME_SRCS))
 
 PS3_SRCS := $(addprefix $(SRC)/skel/ps3/, \
@@ -209,11 +209,13 @@ ELF := $(OBJDIR)/$(TARGET).elf
 # dumps them when the game thread dies). The small math/entity/list helpers
 # are left out. It costs a little CPU on every call, so the release is
 # built without it; the crumbs stay in both.
-FTRACE_DIRS := peds weapons collision render/Shadows render/Particle core/World \
+FTRACE_DIRS := audio vehicles peds weapons collision render/Shadows render/Particle core/World \
   render/Hud core/Radar render/Font render/Sprite2d render/SpecialFX text/Messages \
   control/Darkel control/Pickups control/Garages animation/AnimManager \
   animation/RpAnimBlend animation/AnimBlendAssociation animation/AnimBlendClumpData \
-  core/References core/EventList core/Accident core/Fire entities/Physical
+  core/References core/EventList core/Accident core/Fire entities/Physical \
+  render/Glass render/WaterCannon core/Ropes render/Skidmarks render/Antennas render/Rubbish \
+  render/Coronas render/PointLights render/Fluff weapons/WeaponEffects
 FTRACE_EXCLUDE := math/ Vector Matrix Quaternion General.h Timer.h Rect.h templates.h \
   common.h Lists.h Placeable.h Entity.h Physical.h PtrList.h PtrNode.h ColPoint.h \
   ColModel.h ColTriangle.h ColBox.h ColSphere.h ColLine.h CompressedVector.h \

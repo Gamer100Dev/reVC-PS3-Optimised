@@ -82,6 +82,7 @@ enum VertexProgramId
 	VP_ENV,
 	VP_IM2D,
 	VP_IM3D,
+	VP_FXAA,	// the FXAA pass (graphics menu ANTIALIASING)
 	NUM_VP
 };
 enum FragmentProgramId
@@ -90,6 +91,7 @@ enum FragmentProgramId
 	FP_ENV,
 	FP_ADD,		// rw_simple for additive blending: kills fragments that add nothing
 	FP_ADDALPHA,	// same, SRCALPHA/ONE
+	FP_FXAA,
 	NUM_FP
 };
 

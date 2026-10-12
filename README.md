@@ -10,7 +10,7 @@ The goal is to deliver a faithful, responsive Vice City experience while making 
 
 This project is related to [re3-PS3](https://github.com/stingziz0u/re3-PS3), the PS3 port of Grand Theft Auto III.
 
-> **Current release: 1.1.1 Alpha**
+> **Current release: 1.2 Alpha**
 >
 > The project has undergone extensive automated gameplay testing on real PS3 hardware, including missions, side activities, vehicles, garages, collectibles, map traversal, and saving and loading. However, it has not yet received extensive full-length playthrough testing.
 >
@@ -28,6 +28,7 @@ This project is related to [re3-PS3](https://github.com/stingziz0u/re3-PS3), the
 - Support for the PC game's original models, textures, animations, and data files.
 - DXT1 texture optimisation to reduce video memory usage.
 - Configurable 30 FPS and 60 FPS modes, synchronised with the display to avoid tearing.
+- Optional mipmaps, bilinear/trilinear/anisotropic texture filtering, and FXAA antialiasing in Graphics options.
 
 ### Gameplay and controls
 
@@ -90,7 +91,7 @@ The project is built using [PSL1GHT](https://github.com/ps3dev/ps3toolchain) and
 
 ### 1. Install the package
 
-Install `revc-ps3-1.1.1-alpha.pkg` on your PS3 using your preferred homebrew package manager.
+Install `revc-ps3-1.2-alpha.pkg` on your PS3 using your preferred homebrew package manager.
 
 Once installed, reVC should appear in the XMB.
 
@@ -211,7 +212,7 @@ make -C ps3 verify
 
 The resulting package is:
 
-`ps3/revc-ps3-1.1.1-alpha.pkg`
+`ps3/revc-ps3-1.2-alpha.pkg`
 
 ### Additional build targets
 

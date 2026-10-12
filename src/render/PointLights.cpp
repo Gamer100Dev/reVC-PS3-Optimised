@@ -100,11 +100,23 @@ CPointLights::GenerateLightsAffectingObject(Const CVector *objCoors)
 					ret *= distNorm;
 				}else{
 					float intensity;
-					// distance fade
+					// Distance fade
 					if(distNorm < 0.5f)
 						intensity = 1.0f;
 					else
 						intensity = 1.0f - (distNorm - 0.5f)/(1.0f - 0.5f);
+
+#ifdef __PS3__
+					// The RSX backend represents these local lights as directional
+					// lights for the whole atomic. That makes nearby lamp posts wash
+					// across a car roof much more strongly than the original point
+					// light would. Use a smooth radial fade and lower peak for point
+					// lights so their contribution builds and falls away gradually.
+					if(aLights[i].type == LIGHT_POINT){
+						float remaining = 1.0f - distNorm;
+						intensity = 0.35f * remaining * remaining * (3.0f - 2.0f * remaining);
+					}
+#endif
 
 					if(distance != 0.0f){
 						CVector dir = dist / distance;

@@ -180,6 +180,34 @@ psCameraBeginUpdate(RwCamera *camera)
 	return TRUE;
 }
 
+#if PS3_STAGE != 1
+// Graphics menu: MIPMAPS, TEXTURE FILTERING, ANTIALIASING (MenuScreensCustom.cpp)
+extern int8 gPS3Mipmaps, gPS3TexFilter, gPS3Antialias;
+
+static void
+PS3_ApplyTextureOptions(void)
+{
+	static const int32 filterMode[] = { 0, 1, 2, 2, 2, 2, 2 };
+	static const int32 filterAniso[] = { 1, 1, 1, 2, 4, 8, 16 };
+	int f = gPS3TexFilter;
+	if (f < 0 || f >= (int)ARRAY_SIZE(filterMode))
+		f = gPS3TexFilter = 0;
+	if (rw::ps3::forceMipmaps != !!gPS3Mipmaps || rw::ps3::texFilterMode != filterMode[f] ||
+	    rw::ps3::texAniso != filterAniso[f])
+		PS3_Logf("[video] mipmaps %s (textures loaded from now on), texture filtering %d, anisotropy %dx",
+		         gPS3Mipmaps ? "on" : "off", filterMode[f], filterAniso[f]);
+	rw::ps3::forceMipmaps = !!gPS3Mipmaps;
+	rw::ps3::texFilterMode = filterMode[f];
+	rw::ps3::texAniso = filterAniso[f];
+	if (gPS3Antialias < 0 || gPS3Antialias > 1)
+		gPS3Antialias = 0;
+	if (rw::ps3::fxaaOn != !!gPS3Antialias)
+		PS3_Logf("[video] FXAA %s", gPS3Antialias ? "on" : "off");
+	rw::ps3::fxaaOn = !!gPS3Antialias;
+}
+
+#endif
+
 void
 psCameraShowRaster(RwCamera *camera)
 {
@@ -196,6 +224,9 @@ psCameraShowRaster(RwCamera *camera)
 #endif
 	// always on vsync (ps3video.cpp paces 30/60): the PC frame limiter is hidden
 	RwCameraShowRaster(camera, nil, rwRASTERFLIPWAITVSYNC);
+#if PS3_STAGE != 1
+	PS3_ApplyTextureOptions();
+#endif
 }
 
 RwImage*

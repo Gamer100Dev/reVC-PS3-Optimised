@@ -27,6 +27,7 @@ static int log_mutex_ok;
 
 // set by the exception handler: the stopped game thread may hold the mutex
 static volatile int log_crashing;
+static volatile int log_buffered;	// the watchdog flushes the log (see log_write)
 
 static void log_lock(void)
 {
@@ -54,6 +55,10 @@ PS3_LogInit(void)
 	remove(PS3_LOG_OLD_PATH);
 	rename(PS3_LOG_PATH, PS3_LOG_OLD_PATH);
 	log_file = __real_fopen(PS3_LOG_PATH, "w");
+	if (log_file) {
+		static char log_buf[64 * 1024];
+		setvbuf(log_file, log_buf, _IOFBF, sizeof(log_buf));
+	}
 	log_bytes = 0;
 	log_capped = 0;
 }
@@ -65,6 +70,19 @@ PS3_LogShutdown(void)
 	if (log_file) {
 		fclose(log_file);
 		log_file = NULL;
+	}
+	log_unlock();
+}
+
+// flushes the log through lv2's cache to the disk (a forced power-off loses
+// what is only in the cache)
+extern "C" void
+PS3_LogSync(void)
+{
+	log_lock();
+	if (log_file) {
+		fflush(log_file);
+		fsync(fileno(log_file));
 	}
 	log_unlock();
 }
@@ -90,7 +108,12 @@ log_write(const char *msg, int newline)
 		fputc('\n', log_file);
 		log_bytes++;
 	}
-	fflush(log_file);
+	// Once the watchdog runs, lines stay in the buffer and it writes them
+	// out every second: a write to the disk per line stalled the game
+	// thread while the streaming read from the same disk (the hitches when
+	// new areas load). Crash and hang dumps still go out right away.
+	if (!log_buffered || log_crashing || strncmp(msg, "[crash]", 7) == 0 || strncmp(msg, "[hang]", 6) == 0)
+		fflush(log_file);
 }
 
 extern "C" void
@@ -213,6 +236,7 @@ struct Crumb {
 static Crumb crumbs[CRUMB_COUNT];
 // set by the game (Ped.cpp): prints the entity being processed at the crash
 void (*PS3_crashDumpHook)(void);
+void (*PS3_hangDumpHook)(void);	// more for the [hang] dump (sampman_ps3.cpp: the audio threads)
 static volatile unsigned crumbHead;
 unsigned PS3_crumbFrame;
 
@@ -271,10 +295,14 @@ PS3_BadAngle(void)
 extern "C" void
 PS3_PoolFull(const char *name, int size)
 {
-	if (size < 0)
-		PS3_Logf("[pool] %s: handle asked for something not in the pool (nil?) @%08x", name ? name : "?",
-		         (unsigned)(uintptr_t)__builtin_return_address(0));
-	else
+	static int nBadHandle;
+	if (size < 0) {
+		// at most 16 lines, then one every 1024 (a caller that does it every frame)
+		if (nBadHandle++ < 16 || (nBadHandle & 1023) == 0)
+			PS3_Logf("[pool] %s: handle asked for something not in the pool (nil?) @%08x (%d times)", name ? name : "?",
+			         (unsigned)(uintptr_t)__builtin_return_address(0), nBadHandle);
+		return;
+	} else
 		PS3_Logf("[pool] %s pool full (%d): an object wasn't created", name ? name : "?", size);
 	PS3_Crumb("pool full: size", size);
 }
@@ -425,7 +453,7 @@ PS3_InstallCrashHandler(void)
 // ---- hang watchdog ---------------------------------------------------------
 // A freeze (an endless loop, a wait that never ends) leaves no crash dump:
 // the game thread is still alive. This thread wakes up once a second; if the
-// game has run frames and then none for 20 s, it writes the same dump as a
+// game has run frames and then none for 10 s, it writes the same dump as a
 // crash ([hang] ...), once per freeze, and says when frames come back.
 static volatile int watchdogQuit;
 static sys_ppu_thread_t watchdogTid;
@@ -436,8 +464,21 @@ PS3_WatchdogThread(void *arg)
 	unsigned last = 0, still = 0;
 	int reported = 0;
 	(void)arg;
+	int tick = 0;
+	log_buffered = 1;
 	while (!watchdogQuit) {
 		usleep(1000000);
+		// the console may have to be switched off by force (a freeze that
+		// takes the system with it): the log's lines to the file every
+		// second, onto the disk every 5 s
+		if (++tick % 5 == 0)
+			PS3_LogSync();
+		else {
+			log_lock();
+			if (log_file)
+				fflush(log_file);
+			log_unlock();
+		}
 		unsigned f = PS3_crumbFrame;
 		if (f == 0 || f != last) {
 			if (reported)
@@ -447,10 +488,13 @@ PS3_WatchdogThread(void *arg)
 			reported = 0;
 			continue;
 		}
-		if (++still >= 20 && !reported && !watchdogQuit) {
+		if (++still >= 10 && !reported && !watchdogQuit) {
 			reported = 1;
 			PS3_Logf("[hang] no frame for %u s (stuck in frame %u); what the game thread was doing:", still, f);
 			PS3_DumpCrumbs();
+			if (PS3_hangDumpHook)
+				PS3_hangDumpHook();
+			PS3_LogSync();
 		}
 	}
 	sysThreadExit(0);

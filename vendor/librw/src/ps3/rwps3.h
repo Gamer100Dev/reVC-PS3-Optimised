@@ -118,6 +118,7 @@ struct Ps3Raster
 	int8    tile;		// camera / depth buffer: tile region + 1 (0 linear)
 	bool    zcomp, zcull;
 	uint8   vramFmt;	// PS3_VRAM_*: how the texels are kept in VRAM
+	bool    forcedMips;	// the MIPMAPS option added the mip levels
 };
 
 // VRAM formats of a texture (stage 2). DXT1 (most of VC's PC textures) is
@@ -145,6 +146,11 @@ void gpuMark(int32 id);
 extern bool gpuTimersOn;	// default off (the timestamp reports hang the RSX)
 extern bool additiveKill;	// additive draws kill the fragments that add nothing (default on)
 extern bool dxt1As16;		// DXT1 textures in 16 bits in VRAM (default on; USRDIR/dxt32.txt turns it off)
+// Graphics menu (the game sets these every frame):
+extern bool forceMipmaps;	// textures loaded without mip levels get them (made on the CPU)
+extern int32 texFilterMode;	// 3D textures: 0 the game's filter, 1 bilinear, 2 trilinear
+extern int32 texAniso;		// 3D textures: anisotropic filtering, 1 (off), 2, 4, 8, 16
+extern bool fxaaOn;		// FXAA on the camera's picture before it is shown
 extern bool rsxTiling;		// camera buffers tiled + depth compressed + ZCULL (default on; set before the first camera)
 extern bool zcullOn;		// ZCULL in use (default on; the autotest compares)
 extern int32 blendAlphaRef;	// >0: alpha test ref for alpha blended draws without Z write (smoke...); 0 the game's
@@ -206,6 +212,7 @@ enum {
 	TEXPROF_MIPS,		// mip levels made on the CPU
 	TEXPROF_READBACK,	// VRAM read back by the CPU (slow)
 	TEXPROF_INDEXED,	// palettized D3D8 textures, fast path, all of it
+	TEXPROF_DXT,		// DXT blocks decoded on the CPU
 	TEXPROF_NUM
 };
 struct TexProfile {

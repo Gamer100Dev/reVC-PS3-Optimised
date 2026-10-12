@@ -66,6 +66,12 @@ static uintptr nSampleBankMemoryStartAddress[MAX_SFX_BANKS];
 
 static int32 nPedSlotSfx[MAX_PEDSFX];
 static uint8 nCurrentPedSlot;
+// Ped comments use a separate handle so the stream worker can read them
+// without seeking the handle used by game-thread sample-bank loading.
+static FILE *fpPedCommentHandle;
+static volatile int32 pcRequest = -1;
+static volatile int32 pcSlot;
+static volatile uint32 pcOffset, pcSize;
 
 static uint8 nChannelVolume[MAXCHANNELS+MAX2DCHANNELS];
 static uint32 nStreamLength[TOTAL_STREAMED_SOUNDS];
@@ -85,6 +91,11 @@ static char ProviderName[] = "PS3 STEREO";
 
 static sys_mutex_t mixMutex;	// channels, stream rings (mixer vs game)
 static sys_mutex_t streamMutex;	// stream decoders (decode thread vs game)
+
+static volatile uint32 s_mixBlocks;
+static volatile int s_mixing;
+static volatile uint32 s_streamPasses;
+static volatile int s_streamStep;
 
 static void
 CreateMutex(sys_mutex_t *m, const char *name)
@@ -855,6 +866,10 @@ static u32 audioLate;
 static uint8 monoMode;
 
 static float mixBuf[AUDIO_BLOCK_SAMPLES*OUT_CHANNELS];
+static int s_badChannelLog, s_badChannelsLogged;
+static uint32 s_badFreq;
+static double s_badPos;
+static int32 s_badLen;
 
 static void
 MixChannel(Channel &c)
@@ -892,6 +907,18 @@ MixChannel(Channel &c)
 	double pos = c.pos;
 	const int16 *data = c.data;
 	int32 len = c.length;
+	if(!(step > 0.0 && step < 16.0) || !(pos >= 0.0 && pos < 1.0e9)){
+		if(s_badChannelLog == 0){
+			s_badFreq = c.freq;
+			s_badPos = pos;
+			s_badLen = len;
+			s_badChannelLog = 1;
+		}
+		c.playing = false;
+		return;
+	}
+	if(!(gl == gl) || !(gr == gr))
+		gl = gr = 0.0f;
 	float *out = mixBuf;
 	for(int i = 0; i < AUDIO_BLOCK_SAMPLES; i++){
 		int32 end = (c.loopEnd < 0 || c.loopEnd > len) ? len : c.loopEnd;
@@ -909,6 +936,10 @@ MixChannel(Channel &c)
 			}
 		}
 		int32 i0 = (int32)pos;
+		if(i0 < 0 || i0 >= len){
+			c.playing = false;
+			break;
+		}
 		float t = (float)(pos - i0);
 		int32 i1 = i0 + 1 < len ? i0 + 1 : i0;
 		float s = data[i0] + (data[i1] - data[i0]) * t;
@@ -969,12 +1000,23 @@ AudioFill(float *dst)
 	memset(mixBuf, 0, sizeof(mixBuf));
 	{
 		MixLock lock;
+		s_mixing = 1;
 		for(int i = 0; i < MAXCHANNELS+MAX2DCHANNELS; i++)
 			if(channels[i].playing)
 				MixChannel(channels[i]);
 		for(int i = 0; i < MAX_STREAMS; i++)
 			if(streams[i])
 				MixStream(*streams[i]);
+		s_mixing = 0;
+	}
+	s_mixBlocks++;
+	if(s_badChannelLog){
+		if(s_badChannelsLogged < 8){
+			s_badChannelsLogged++;
+			PS3_Logf("[audio] stopped invalid channel: frequency %u, position %.0f of %d",
+			         s_badFreq, s_badPos, s_badLen);
+		}
+		s_badChannelLog = 0;
 	}
 	for(int i = 0; i < AUDIO_BLOCK_SAMPLES*OUT_CHANNELS; i++){
 		float v = mixBuf[i];
@@ -1058,6 +1100,25 @@ StreamThread(void *arg)
 	static int16 tmp[4096*2];
 	(void)arg;
 	while(!s_audioQuit){
+		s_streamPasses++;
+		s_streamStep = 1;
+		// A ped comment can be large; keep its seek and read off the game thread.
+		int32 comment = pcRequest;
+		if(comment >= 0){
+			__asm__ volatile("lwsync" ::: "memory");
+			int32 slot = pcSlot;
+			uint32 offset = pcOffset, size = pcSize;
+			void *dst = (void*)(nSampleBankMemoryStartAddress[SFX_BANK_PED_COMMENTS] + PED_BLOCKSIZE*slot);
+			if(fpPedCommentHandle && fseek(fpPedCommentHandle, offset, SEEK_SET) == 0 &&
+			   fread(dst, 1, size, fpPedCommentHandle) == size){
+				LittleSwap16(dst, size/2);
+				__asm__ volatile("lwsync" ::: "memory");
+				nPedSlotSfx[slot] = comment;
+			}
+			__asm__ volatile("lwsync" ::: "memory");
+			pcRequest = -1;
+		}
+		s_streamStep = 2;
 		// Only the newest request for each stream slot survives. Open, seek, and
 		// initial decode happen on this worker without either shared-state lock.
 		for(int i = 0; i < MAX_STREAMS; i++){
@@ -1161,14 +1222,44 @@ StreamThread(void *arg)
 			}
 			ReleaseStreamWorker(s);
 		}
+		s_streamStep = 3;
 		usleep(8000);
+		s_streamStep = 0;
 	}
 	sysThreadExit(0);
+}
+
+extern void (*PS3_hangDumpHook)(void);
+extern int32 PS3_audioEntity, PS3_audioEntityType;
+
+static void
+AudioHangDump(void)
+{
+	PS3_Logf("[hang] audio: last entity processed %d (type %d)", PS3_audioEntity, PS3_audioEntityType);
+	uint32 blocks = s_mixBlocks, passes = s_streamPasses;
+	usleep(100000);
+	int playing = 0;
+	for(int i = 0; i < MAXCHANNELS+MAX2DCHANNELS; i++)
+		if(channels[i].playing)
+			playing++;
+	PS3_Logf("[hang] audio: mixer %u blocks/0.1 s (mixing %d), stream worker %u passes (step %d), "
+	         "ped comment %d, channels %d",
+	         s_mixBlocks-blocks, s_mixing, s_streamPasses-passes, s_streamStep,
+	         (int)pcRequest, playing);
+	for(int i = 0; i < MAXCHANNELS+MAX2DCHANNELS; i++){
+		Channel &c = channels[i];
+		if(c.playing)
+			PS3_Logf("[hang]   channel %d: freq %u pos %.0f/%d loop %d-%d 3D %d (%.1f %.1f %.1f)",
+			         i, c.freq, c.pos, c.length, (int)c.loopStart, (int)c.loopEnd,
+			         (int)c.is3D, c.x, c.y, c.z);
+	}
 }
 
 static bool
 AudioPortInit(void)
 {
+	extern void (*PS3_hangDumpHook)(void);
+	PS3_hangDumpHook = AudioHangDump;
 	audioPortParam param;
 	s32 r;
 	u64 rv;
@@ -1344,6 +1435,7 @@ cSampleManager::Initialise(void)
 	for(int32 i = 0; i < MAX_PEDSFX; i++)
 		nPedSlotSfx[i] = NO_SAMPLE;
 	nCurrentPedSlot = 0;
+	pcRequest = -1;
 	for(int32 i = 0; i < MAXCHANNELS+MAX2DCHANNELS; i++){
 		nChannelVolume[i] = 0;
 		memset(&channels[i], 0, sizeof(Channel));
@@ -1398,6 +1490,7 @@ void
 cSampleManager::Terminate(void)
 {
 	AudioPortShutdown();
+	pcRequest = -1;
 	{
 		StreamLock slock;
 		MixLock lock;
@@ -1414,6 +1507,10 @@ cSampleManager::Terminate(void)
 	if(fpSampleDataHandle){
 		fclose(fpSampleDataHandle);
 		fpSampleDataHandle = nil;
+	}
+	if(fpPedCommentHandle){
+		fclose(fpPedCommentHandle);
+		fpPedCommentHandle = nil;
 	}
 	if(nSampleBankMemoryStartAddress[SFX_BANK_0]){
 		free((void*)nSampleBankMemoryStartAddress[SFX_BANK_0]);
@@ -1506,7 +1603,8 @@ cSampleManager::LoadPedComment(uint32 nComment)
 	// no talking peds during cutscenes
 	if(MusicManager.IsInitialised() && MusicManager.GetMusicMode() == MUSICMODE_CUTSCENE)
 		return false;
-	if(fpSampleDataHandle == nil || nSampleBankMemoryStartAddress[SFX_BANK_PED_COMMENTS] == 0)
+	if(nComment >= TOTAL_AUDIO_SAMPLES || fpPedCommentHandle == nil ||
+	   nSampleBankMemoryStartAddress[SFX_BANK_PED_COMMENTS] == 0 || pcRequest >= 0)
 		return false;
 	uint32 size = m_aSamples[nComment].nSize;
 	if(size > PED_BLOCKSIZE)
@@ -1520,15 +1618,14 @@ cSampleManager::LoadPedComment(uint32 nComment)
 			   (const uint8*)channels[i].data < slotStart + PED_BLOCKSIZE)
 				channels[i].playing = false;
 	}
-	if(fseek(fpSampleDataHandle, m_aSamples[nComment].nOffset, SEEK_SET) != 0)
-		return false;
-	void *dst = (void*)(nSampleBankMemoryStartAddress[SFX_BANK_PED_COMMENTS] + PED_BLOCKSIZE*nCurrentPedSlot);
-	if(fread(dst, 1, size, fpSampleDataHandle) != size)
-		return false;
-	LittleSwap16(dst, size/2);
-	nPedSlotSfx[nCurrentPedSlot] = nComment;
+	nPedSlotSfx[nCurrentPedSlot] = NO_SAMPLE;
+	pcSlot = nCurrentPedSlot;
+	pcOffset = m_aSamples[nComment].nOffset;
+	pcSize = size;
 	if(++nCurrentPedSlot >= MAX_PEDSFX)
 		nCurrentPedSlot = 0;
+	__asm__ volatile("lwsync" ::: "memory");
+	pcRequest = nComment;
 	return true;
 }
 
@@ -1920,6 +2017,7 @@ cSampleManager::InitialiseSampleBanks(void)
 		fpSampleDescHandle = nil;
 		return false;
 	}
+	fpPedCommentHandle = fopen(SampleBankDataFilename, "rb");
 	fseek(fpSampleDataHandle, 0, SEEK_END);
 	int32 _nSampleDataEndOffset = ftell(fpSampleDataHandle);
 	rewind(fpSampleDataHandle);
