@@ -200,7 +200,7 @@ Install and configure the [ps3dev toolchain](https://github.com/ps3dev/ps3toolch
 
 ```sh
 git clone https://github.com/Gamer100Dev/reVC-PS3-Optimised
-cd reVC-PS3
+cd reVC-PS3-Optimised
 
 export PS3DEV=/usr/local/ps3dev
 export PSL1GHT=/usr/local/ps3dev
