@@ -4,7 +4,7 @@
 
 **Grand Theft Auto: Vice City, ported natively to the PlayStation 3.**
 
-reVC-PS3 is a PS3 homebrew port of the reverse-engineered Grand Theft Auto: Vice City codebase. Developed by **Gamer100_Dev with OpenAI Codex**, the project brings Vice City to the PlayStation 3 using PSL1GHT, a custom RSX hardware-rendering backend, PS3-specific platform code, and the original game's PC assets.
+reVC-VC is a PS3 homebrew port of the reverse-engineered Grand Theft Auto: Vice City codebase. Developed by **Gamer100_Dev with OpenAI Codex**, the project brings Vice City to the PlayStation 3 using PSL1GHT, a custom RSX hardware-rendering backend, PS3-specific platform code, and the original game's PC assets.
 
 The goal is to deliver a faithful, responsive Vice City experience while making the most of the PS3's Cell Broadband Engine, SPUs, and RSX graphics processor.
 
