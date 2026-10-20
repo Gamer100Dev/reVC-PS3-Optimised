@@ -8,7 +8,7 @@ reVC-PS3 is a PS3 homebrew port of the reverse-engineered Grand Theft Auto: Vice
 
 The goal is to deliver a faithful, responsive Vice City experience while making the most of the PS3's Cell Broadband Engine, SPUs, and RSX graphics processor.
 
-This project is related to [re3-PS3](https://github.com/stingziz0u/re3-PS3), the PS3 port of Grand Theft Auto III.
+This project is related to [reVC-PS3](https://github.com/stingziz0u/reVC-PS3), the PS3 port of Grand Theft Auto Vice City.
 
 > **Current release: 1.2 Alpha**
 >
